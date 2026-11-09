@@ -1,0 +1,40 @@
+{
+    "name": "小美",
+    "gender": "女",
+    "age": 21,
+    "weight": 60,
+    "height": 170,
+    "address": "北京市海淀区西土城路十号",
+    "phone": "12345678901",
+    "email": "xiaoming@example.com",
+    "prefer": {
+        "color": [
+            "白色",
+            "粉色"
+        ],
+        "style": "宽松，舒适，透气，偏运动风格"
+    },
+    "purchase_records": [
+            {
+                "time": "2025-05-20 09:15:00",
+                "item": "New Balance Fresh Foam 跑鞋",
+                "address":"广东省深圳市宝安区影驰商业大厦",
+                "phone":"66574396",
+                "price": 799.0
+            },
+            {
+                "time": "2025-07-10 16:45:00",
+                "item": "Puma Casual 休闲鞋",
+                "address":"广东省深圳市宝安区影驰商业大厦",
+                "phone":"66574396",
+                "price": 499.0
+            },
+            {
+                "time": "2025-07-25 11:00:00",
+                "item": "Asics Gel-Kayano 跑鞋",
+                "address":"广东省深圳市宝安区影驰商业大厦",
+                "phone":"66574396",
+                "price": 1099.0
+            }
+        ]
+}

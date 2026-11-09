@@ -1,0 +1,107 @@
+import json
+import re
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from new_test_deepseek import DeepSeekChat
+
+def extract_json_from_model_output(response):
+        code_block_match = re.search(r"```(?:json)?\s*(.*?)```", response.content, re.DOTALL)#定义提取JSON回复的正则表达式
+        if code_block_match:
+            json_str = code_block_match.group(1).strip()
+        else:
+            json_str = response.content.strip()
+        try:
+            response = json.loads(json_str)
+        except json.JSONDecodeError:
+            response = {}
+        return response
+class Multi_Platform_Agent:
+    def __init__(self,llm):
+        self.llm=llm
+    
+    def merge_docs(self,docs):
+        merge_doc=[]
+        for platform_docs in docs:
+            for doc in platform_docs:
+                merge_doc.append(doc)
+
+        prompt = f"""
+            你是一个商品文档格式化助手，输入是一个包含平台商品信息的列表，你的任务是将商品信息格式化成固定格式的结果，结果中包含以下字段：
+
+            - 品牌
+            - 名称
+            - 价格
+            - 颜色
+            - 是否折扣
+            - 折扣类型
+            - 在售商店
+
+            最终以 JSON 格式输出：
+            注意：不要思考太久
+            ### 示例输入
+            ["品牌: Nike, 名称: Nike Sport 女鞋, 颜色: white, 价格: 59；是否折扣: 是；折扣类型: 0.8；在售商店: 京东；时间: 2020-4-2；类别: women's shoe；"]
+
+            ### 示例输出
+            {{"品牌": Nike, "名称": "Nike Sport women shoe", "价格": 59, "颜色": white, "是否折扣": 是, "折扣类型": 0.8, "在售商店": 京东"}}
+                
+            现在，请对以下文档进行整合处理：
+            {merge_doc}
+            """
+        response=self.llm.invoke(prompt)
+        code_block_match = re.search(r"```(?:json)?\s*(.*?)```", response.content, re.DOTALL)
+        if code_block_match:
+            json_str = code_block_match.group(1).strip()
+        else:
+            json_str = response.content.strip()
+        try:
+            doc = json.loads(json_str)
+        except json.JSONDecodeError:
+            doc = {}
+        #print(doc)
+        return doc
+
+    def select_best(self, docs):
+        prompt = f"""
+            你将收到一个包含多个平台商品信息的文档列表。请从中选择最具性价比的商品top3，若收到的列表中包含的商品不足三个，则返回全部商品。
+            注意：
+            1. 文档列表中包含的商品可能含有折扣和折扣类型，请综合考虑价格和折扣因素。
+            2. 折扣类型如果是数字，代表最后价格为价格乘以对应的数字。
+            3. 输出顺序代表top顺序，输出格式必须为json格式
+            4. 不要思考太久。
+            示例输出：
+            {{"推荐方案1":"名称:Women’s Aerosoles Lovely Loafer,价格:55,是否折扣：否,最终价格:55,颜色:black,在售商店：拼多多","推荐方案2":"名称:MUK LUKS Womens Jane Suede Moccasin,价格:70,是否折扣：是,折扣类型:0.8,最终价格:56,颜色:black,在售商店：拼多多","推荐方案3":"名称:MUK LUKS Womens Jane Suede Moccasin,价格:65,是否折扣：是,折扣类型:满40减5,最终价格:60,颜色:black,在售商店：拼多多"}}
+
+            以下为需要选择的文档：{docs}
+        """
+        print('正在进行挑选')
+        response = self.llm.invoke(prompt)
+        
+        return extract_json_from_model_output(response)
+    def run(self,docs):
+        """运行多平台商品选择流程"""
+        merged_docs=[]
+        print('开始整合文档')
+        # docs 可能是 list[str]（Search_agent.run 的返回）或 list[list[str]]（按平台分组），
+        # 先展平成一条条商品描述字符串。原实现对 list[str] 会逐字符遍历并对每个字符调用一次LLM。
+        flat_docs = []
+        for item in docs:
+            if isinstance(item, (list, tuple)):
+                flat_docs.extend(item)
+            else:
+                flat_docs.append(item)
+        for doc in flat_docs:
+            # merge_docs 期望 list[list[str]]，这里包成 [[doc]]，一条商品描述对应一次LLM格式化调用
+            merged_docs.append(self.merge_docs([[doc]]))
+
+        print('整合完毕，准备进行挑选')
+        print(merged_docs)
+        best_docs = self.select_best(merged_docs)
+        return best_docs
+    
+if __name__=='__main__':
+    llm = DeepSeekChat()
+
+    multiplatformagent=Multi_Platform_Agent(llm)
+    docs=[[ "品牌: Muk Luks,名称: MUK LUKS Women's Elle Wedge Sandals,颜色: Black,价格: 39；是否折扣: 否；折扣类型:null；在售商店: 淘宝；时间: 2018-01；类别: Clothing,Shoes,Women's Shoes,All Women's Shoes；"],  ["品牌: Muk Luks,名称: MUK LUKS Womens Jane Suede Moccasin,颜色: Grey,价格: 43；是否折扣: 是；折扣类型:0.8；在售商店: 拼多多；时间: 2018-01；类别: Clothing,Shoes,Women's Shoes,Women's Casual Shoes,All Women's Shoes；",  "品牌: Muk Luks,名称: MUK LUKS Women's Nikki Boot,颜色: Dark Brown,价格: 62；是否折扣: 是；折扣类型:0.5；在售商店: 拼多多；时间: 2018-01；类别: Clothing,Shoes,Women's Shoes,Women's Winter Boots,All Women's Shoes,Women's Boots；"]]
+    result=multiplatformagent.run(docs)
+    print(result)

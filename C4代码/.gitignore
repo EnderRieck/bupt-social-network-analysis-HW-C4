@@ -1,0 +1,5 @@
+# pixi
+.pixi/
+# python
+__pycache__/
+*.pyc

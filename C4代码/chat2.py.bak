@@ -1,0 +1,200 @@
+import json
+import re
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from new_test_deepseek import DeepSeekChat
+from multiplatform_agent import Multi_Platform_Agent
+from prefer_rec import RecQueryComposer
+from task_compose import Decision_Agent
+from search_agent2 import QueryConditionAgent
+from search_a import Search_agent
+import datetime
+from prefer_rec import RecQueryComposer
+from langchain.schema import HumanMessage
+from langchain.prompts import PromptTemplate
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+
+
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
+
+def intent_recognition(input,history):
+    prompt=f"""
+    你是一个判断用户购物意图助手，你将收到用户历史聊天摘要和当前用户输入，并判断当前用户输入是否有购物意图，若存在购物意图，则输出1，否则输出0，注意，不要添加其他任务东西。
+    示例
+    1.
+    历史聊天摘要： null
+    用户输入：我最近两个月打算去爬山，在秋天，应该做什么准备呢
+    输出：1
+
+    2.
+    历史聊天摘要： null
+    用户输入：今天天气怎么样？
+    输出：0
+    
+    3.
+    历史聊天摘要： null
+    用户输入：我准备两个月后 在冬天登山，应该做哪些购物准备？
+    输出：1
+    
+    4.
+    历史聊天摘要：今天可能下雨
+    用户输入：看看天气，如果下雨的话我有可能会买雨具
+    输出：1
+    
+    5.
+    历史聊天摘要：null
+    用户输入：看看天气，如果下雨的话我有可能会买雨具
+    输出：0
+    
+    历史聊天摘要：{history}
+    以下为用户输入{input}
+    """
+    
+    prompt2=f"""
+    你是一个判断用户购物意图助手，你将收到用户输入，并判断当前用户输入是否有购物意图，若存在购物意图，则输出1，否则输出0，注意，不要添加其他任务东西。
+    以下为用户输入{input}
+    """
+    response=llm.invoke(prompt).content.strip()
+    #print(response)
+    #response2=llm.invoke(prompt2).content.strip()
+    if response=='1':
+        return True
+    return False
+
+def confirm_purchase_intent():
+    print("助手: 您确定要进行购物推荐吗？(是/否)")
+    response = input("用户: ").strip().lower()
+    return response == "是"
+
+def maybe_summarize(history_obj: BaseChatMessageHistory, llm,message_count, max_msgs: int =5):
+    
+    msgs = history_obj.messages
+    # 如果消息数量没超阈值，什么都不做
+    if message_count <= max_msgs:
+        return message_count
+
+    # 拼接成一段对话文本
+    message_count=1
+    print('开始生成摘要')
+    dialog_txt = "\n".join(
+        f"{'用户' if isinstance(m, HumanMessage) else '助手'}: {m.content}"
+        for m in msgs
+    )
+    # 调用 LLM 生成要点式摘要
+    summary = llm.invoke(f"请对以下对话内容进行要点式总结：\n\n{dialog_txt}").content.strip()
+
+    # 清空旧历史，只保留一条“AI摘要”作为上下文开头
+    history_obj.clear()
+    history_obj.add_ai_message("（对话摘要）" + summary)
+    return message_count
+
+def run_chat(session_id: str, user_input: str,message_count: int):
+    # 拿到这个会话的 history 对象
+    message_count+=1
+    history_obj = get_session_history(session_id)
+
+    #print(history_obj)
+    print('准备回复中')
+    response = with_message_history.invoke(
+                {"input": user_input},
+                config={"configurable": {"session_id": session_id}},
+            ).content.strip()
+
+    # ③ 再次摘要（把最新的 user+AI 也纳入压缩）
+    message_count=maybe_summarize(history_obj, llm, message_count,max_msgs=3)
+
+    return response,message_count
+    
+def run_workflow(user_input,user_info):
+    decision_result = decisionAgent.run(user_input)
+    print(decision_result)
+    intent = decision_result['意图分析']
+    tasks = decision_result['任务分解']
+    new_query = []
+    for task in tasks:
+        if '鞋' in task:
+            input_recommend=[user_info,task,True]
+            new_task = recommand_rec_Agent.compose_rec_query(input_recommend)
+            new_query.append(new_task)
+    for query in new_query:
+        print(query)
+        results=searchagent.run(query,k=3)#rank
+        print(results)
+        price_result = multiplatformAgent.run(results)
+        print(price_result)
+        return price_result
+    
+    return '未找到符合需求的商品，请修改描述或条件后重试'
+if __name__=="__main__":
+
+    llm = DeepSeekChat()
+    decisionAgent = Decision_Agent(llm)
+    userprefer_agent = User_Prefer_Agent(llm)
+    multiplatformAgent = Multi_Platform_Agent(llm)
+    recommand_rec_Agent=RecQueryComposer(llm)
+    searchagent=Search_agent(db_path="./shoe_vector_store.db",llm=llm)
+    # 用户信息路径
+    user_info_path = '/data1/wuquanda/agent_start/personal_assistant/personal_inf.json'
+    user_info = recommand_rec_Agent.get_user_info(user_info_path)
+    """
+    # 初始化向量数据库
+    embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectordb_list = [
+        "/data1/wuquanda/agent_start/personal_assistant/tb_shoe_chroma_dbs",
+        "/data1/wuquanda/agent_start/personal_assistant/jd_shoe_chroma_dbs",
+        "/data1/wuquanda/agent_start/personal_assistant/pdd_shoe_chroma_dbs"
+    ]
+    query_agent = QueryConditionAgent(llm, vectordb_list, embedding_model)
+    """
+    prompt=ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "你是一个商家聊天机器人，负责和客户进行对话，如果用户输入和购物无关，请在简短回答问题后隐晦地提醒用户你只是个购物推荐助手，如果用户展现比较强的否定或者攻击性意图，请坦率地承认自己错了注意，不要思考太久，回复不要超过50个字。",
+            ),
+            MessagesPlaceholder(variable_name='history'),
+            ("human","{input}"),
+        ]
+    )
+    runnable= prompt | llm
+    session_id= "abc123"
+    store = {}
+    with_message_history = RunnableWithMessageHistory(
+            runnable,
+            get_session_history,
+            input_messages_key="input",
+            history_messages_key="history",
+        )
+    message_count=0
+    response_flag=0
+    while True:
+        #print(f'message_count={message_count}')
+        user_input = input("用户: ").strip()
+        history_obj = get_session_history(session_id)
+        history_context = "\n".join([msg.content for msg in history_obj.messages])
+        if user_input=='是' and response_flag:
+            response_flag=0
+            ##下单...
+        if intent_recognition(user_input,history_context):
+            message_count += 1
+            history_obj.add_user_message(user_input)
+            history_obj = get_session_history(session_id)
+            message_count=maybe_summarize(history_obj, llm, message_count,max_msgs=3)
+            if confirm_purchase_intent():
+                
+                response=run_workflow(user_input,user_info)
+            else:
+                response = "好的，如果您有其他问题，请随时告诉我。"
+        
+        else:
+            response,message_count=run_chat(session_id,user_input,message_count)
+        print(f"助手:{response}")
+        if "请确认购买信息" in response:
+            response_flag=1
+        
